@@ -13,9 +13,54 @@ const EMPTY_FORM: PostFormData = {
   notes: '',
 };
 
+function parseStockText(text: string): Partial<PostFormData> {
+  const lines = text.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+  const result: Partial<PostFormData> & { exitPoints: string[] } = { exitPoints: [] };
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+
+    // Category
+    if (/^swing$/i.test(lower)) { result.category = 'Swing'; continue; }
+    if (/^investment$/i.test(lower)) { result.category = 'Investment'; continue; }
+
+    // Entry / Buy
+    if (/^(buy|entry|cmp)/i.test(lower)) {
+      const afterLabel = line.replace(/^[a-z]+\s*[:=\-]\s*/i, '');
+      const nums = afterLabel.match(/[\d.]+/g);
+      if (nums) result.entryPrice = nums.join(' - ');
+      continue;
+    }
+
+    // Sell / Target (T1, T2, Target, Sell)
+    if (/^(sell|t\d|target)/i.test(lower)) {
+      const afterLabel = line.replace(/^[a-z]+\d*\s*[:=\-]\s*/i, '');
+      const nums = afterLabel.match(/[\d.]+/g);
+      if (nums) result.exitPoints.push(...nums);
+      continue;
+    }
+
+    // Stop Loss
+    if (/^(sl|stop)/i.test(lower)) {
+      const num = line.match(/[\d.]+/);
+      if (num) result.stopLoss = num[0];
+      continue;
+    }
+
+    // First unmatched line = stock name
+    if (!result.stockName) {
+      result.stockName = line.toUpperCase();
+    }
+  }
+
+  return result;
+}
+
 export default function Post() {
   const navigate = useNavigate();
   const [form, setForm] = useState<PostFormData>(EMPTY_FORM);
+  const [pasteText, setPasteText] = useState('');
+  const [parseError, setParseError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,10 +73,7 @@ export default function Post() {
   }
 
   function removeTarget(index: number) {
-    setForm((prev) => ({
-      ...prev,
-      exitPoints: prev.exitPoints.filter((_, i) => i !== index),
-    }));
+    setForm((prev) => ({ ...prev, exitPoints: prev.exitPoints.filter((_, i) => i !== index) }));
   }
 
   function updateTarget(index: number, value: string) {
@@ -40,6 +82,21 @@ export default function Post() {
       pts[index] = value;
       return { ...prev, exitPoints: pts };
     });
+  }
+
+  function handleAutoParse() {
+    setParseError(null);
+    const parsed = parseStockText(pasteText);
+    if (!parsed.stockName && !parsed.entryPrice && !parsed.exitPoints?.length) {
+      setParseError("Couldn't extract data — check the format and try again.");
+      return;
+    }
+    setForm((prev) => ({
+      ...prev,
+      ...parsed,
+      exitPoints: parsed.exitPoints?.length ? parsed.exitPoints : [''],
+    }));
+    setPasteText('');
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -80,6 +137,30 @@ export default function Post() {
   return (
     <div className="post-page">
       <h1 className="page-title">Add Stock Suggestion</h1>
+
+      {/* Smart Paste */}
+      <div className="smart-paste-box">
+        <label className="smart-paste-label">Smart Paste</label>
+        <p className="smart-paste-hint">
+          Paste raw text (e.g. from WhatsApp) and click Auto-fill.
+        </p>
+        <textarea
+          rows={5}
+          className="smart-paste-textarea"
+          placeholder={`Swing\nAster DM Healthcare\nBuy - 670 to 690\nSell - 810\nSL - 605`}
+          value={pasteText}
+          onChange={(e) => setPasteText(e.target.value)}
+        />
+        {parseError && <p className="smart-parse-error">{parseError}</p>}
+        <button
+          type="button"
+          className="auto-fill-btn"
+          onClick={handleAutoParse}
+          disabled={!pasteText.trim()}
+        >
+          Auto-fill Fields
+        </button>
+      </div>
 
       <form className="post-form" onSubmit={handleSubmit}>
         {error && <div className="form-error">{error}</div>}
